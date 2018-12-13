@@ -13,7 +13,7 @@ module FFMPEG
 
     UNSUPPORTED_CODEC_PATTERN = /^Unsupported codec with id (\d+) for input stream (\d+)$/
 
-    def initialize(path, skip_head_request = true)
+    def initialize(path, skip_head_request: true)
       @path = path
 
       if remote?
