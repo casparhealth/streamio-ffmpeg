@@ -57,7 +57,7 @@ module FFMPEG
             # rather than .path
 
             it 'should not be found' do
-              expect { Movie.new('http://127.0.0.1:8000/awesome%20movie.mov?fail=1') }.to raise_error(Errno::ENOENT)
+              expect { Movie.new('http://127.0.0.1:8000/awesome%20movie.mov?fail=1', false) }.to raise_error(Errno::ENOENT)
             end
           end
 
@@ -74,14 +74,14 @@ module FFMPEG
         end
         context 'that redirects' do
           context 'to a remote uri' do
-            let(:movie) { Movie.new('http://www.redirect-example.com/moved_movie.mov') }
+            let(:movie) { Movie.new('http://www.redirect-example.com/moved_movie.mov', false) }
 
             it "should know the file size" do
               expect(movie.size).to eq(455_546)
             end
           end
           context 'to a relative uri' do
-            let(:movie) { Movie.new('http://127.0.0.1:8000/deep_path/awesome%20movie.mov') }
+            let(:movie) { Movie.new('http://127.0.0.1:8000/deep_path/awesome%20movie.mov', false) }
 
             it 'should know the file size' do
               expect(movie.size).to eq(455_546)
@@ -92,13 +92,13 @@ module FFMPEG
             after { FFMPEG.max_http_redirect_attempts = nil }
 
             it 'raise FFMPEG::HTTPTooManyRequests' do
-              expect { Movie.new('http://127.0.0.1:8000/deep_path/awesome%20movie.mov') }.to raise_error(FFMPEG::HTTPTooManyRequests)
+              expect { Movie.new('http://127.0.0.1:8000/deep_path/awesome%20movie.mov', false) }.to raise_error(FFMPEG::HTTPTooManyRequests)
             end
           end
 
           context 'to a relative uri with too many redirects' do
             it 'should know the file size' do
-              expect { Movie.new('http://www.toomany-redirects-example.com/moved_movie.mov') }.to raise_error(FFMPEG::HTTPTooManyRequests)
+              expect { Movie.new('http://www.toomany-redirects-example.com/moved_movie.mov', false) }.to raise_error(FFMPEG::HTTPTooManyRequests)
             end
           end
         end
