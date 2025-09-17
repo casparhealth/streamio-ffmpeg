@@ -1,6 +1,14 @@
+
+The Caspar-health fork of Streamio FFMPEG
+===============
+It's used in production (it's fork of a ruby gem) https://github.com/casparhealth/caspar-backend/blob/develop/Gemfile#L83
+
+```
+    git: 'https://github.com/casparhealth/streamio-ffmpeg.git',
+```
+
 Streamio FFMPEG
 ===============
-
 [![Build Status](https://travis-ci.org/bikeath1337/streamio-ffmpeg.svg?branch=master)](https://travis-ci.org/bikeath1337/streamio-ffmpeg)
 [![Code Climate](https://codeclimate.com/github/bikeath1337/streamio-ffmpeg/badges/gpa.svg)](https://codeclimate.com/github/bikeath1337/streamio-ffmpeg)
 [![Test Coverage](https://codeclimate.com/github/bikeath1337/streamio-ffmpeg/badges/coverage.svg)](https://codeclimate.com/github/bikeath1337/streamio-ffmpeg/coverage)
