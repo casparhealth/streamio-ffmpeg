@@ -78,26 +78,20 @@ describe FFMPEG do
 
   end
 
-  describe '.max_http_redirect_attempts' do
-    after(:each) do
-      FFMPEG.max_http_redirect_attempts = nil
+  describe '.input_format_whitelist' do
+    after { FFMPEG.input_format_whitelist = nil }
+
+    it 'defaults to the mp4/mov demuxer family' do
+      expect(FFMPEG.input_format_whitelist).to eq 'mov,mp4,m4a,3gp'
     end
 
-    it 'should default to 10' do
-      expect(FFMPEG.max_http_redirect_attempts).to eq 10
+    it 'is assignable' do
+      FFMPEG.input_format_whitelist = 'mov,wav'
+      expect(FFMPEG.input_safety_options).to eq %w(-protocol_whitelist file -format_whitelist mov,wav)
     end
 
-    it 'should be an Integer' do
-      expect { FFMPEG.max_http_redirect_attempts = 1.23 }.to raise_error(Errno::ENOENT)
-    end
-
-    it 'should not be negative' do
-      expect { FFMPEG.max_http_redirect_attempts = -1 }.to raise_error(Errno::ENOENT)
-    end
-
-    it 'should be assignable' do
-      FFMPEG.max_http_redirect_attempts = 5
-      expect(FFMPEG.max_http_redirect_attempts).to eq 5
+    it 'rejects a blank list' do
+      expect { FFMPEG.input_format_whitelist = ' ' }.to raise_error(ArgumentError)
     end
   end
 end

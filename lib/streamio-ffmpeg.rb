@@ -72,22 +72,30 @@ module FFMPEG
     @ffprobe_binary = bin
   end
 
-  # Get the maximum number of http redirect attempts
+  DEFAULT_INPUT_FORMAT_WHITELIST = 'mov,mp4,m4a,3gp'.freeze
+
+  # Demuxers ffprobe/ffmpeg may use for an input. Restricting them stops a crafted upload
+  # (an HLS/concat playlist renamed to .mp4) from making ffmpeg open other files or URLs.
   #
-  # @return [Integer] the maximum number of retries
-  def self.max_http_redirect_attempts
-    @max_http_redirect_attempts.nil? ? 10 : @max_http_redirect_attempts
+  # @return [String] comma-separated demuxer names
+  def self.input_format_whitelist
+    @input_format_whitelist || DEFAULT_INPUT_FORMAT_WHITELIST
   end
 
-  # Set the maximum number of http redirect attempts.
+  # @param [String, nil] formats comma-separated demuxer names; nil restores the default
+  # @raise ArgumentError if formats is blank
+  def self.input_format_whitelist=(formats)
+    if !formats.nil? && formats.to_s.strip.empty?
+      raise ArgumentError, 'input_format_whitelist must not be blank'
+    end
+    @input_format_whitelist = formats
+  end
+
+  # Options placed before every `-i`: only the local file protocol, only whitelisted demuxers.
   #
-  # @param [Integer] the maximum number of retries
-  # @return [Integer] the number of retries you set
-  # @raise Errno::ENOENT if the value is negative or not an Integer
-  def self.max_http_redirect_attempts=(v)
-    raise Errno::ENOENT, 'max_http_redirect_attempts must be an integer' if v && !v.is_a?(Integer)
-    raise Errno::ENOENT, 'max_http_redirect_attempts may not be negative' if v && v < 0
-    @max_http_redirect_attempts = v
+  # @return [Array<String>]
+  def self.input_safety_options
+    ['-protocol_whitelist', 'file', '-format_whitelist', input_format_whitelist]
   end
 
   # Cross-platform way of finding an executable in the $PATH.

@@ -1,6 +1,4 @@
 require 'spec_helper.rb'
-require 'net/http'
-require 'webrick'
 
 module FFMPEG
   describe Movie do
@@ -28,79 +26,73 @@ module FFMPEG
         end
       end
 
-      context "given a URL" do
-        before(:context) { start_web_server }
-        after(:context) { stop_web_server }
-        context "that is correct" do
+      context "given a remote or protocol-prefixed input" do
+        let(:listener) { ConnectionCounter.new }
+        after { listener.close }
 
-          let(:movie) { Movie.new("http://127.0.0.1:8000/awesome%20movie.mov") }
+        [
+          'http://127.0.0.1:%d/awesome.mov',
+          'HTTPS://127.0.0.1:%d/awesome.mov',
+          'concat:http://127.0.0.1:%d/a.mp4|/dev/null',
+          'tcp://127.0.0.1:%d'
+        ].each do |template|
+          it "refuses #{template.sub('%d', '<port>')} without opening a connection" do
+            url = format(template, listener.port)
 
-          it "should be valid" do
-            expect(movie).to be_valid
-          end
-
-          it "should know the file size" do
-            expect(movie.size).to eq(455546)
-          end
-
-          it "should remember the movie URL" do
-            expect(movie.path).to eq("http://127.0.0.1:8000/awesome%20movie.mov")
-          end
-
-          it "should be marked as remote" do
-            expect(movie.remote?).to be_truthy
-          end
-
-          context 'with a query string' do
-            # We're mocking this to fail on the same URL with the query string added.
-            # This means that we're passing the query string through using .request_uri
-            # rather than .path
-
-            it 'should not be found' do
-              expect { Movie.new('http://127.0.0.1:8000/awesome%20movie.mov?fail=1', false) }.to raise_error(Errno::ENOENT)
-            end
-          end
-
-          context 'for existing file with no access' do
-            it 'should raise an exception' do
-              expect { Movie.new('http://127.0.0.1:8000/unauthorized.mov') }.to raise_error(Errno::ENOENT, /403/)
-            end
+            expect { Movie.new(url) }.to raise_error(FFMPEG::RemoteInputNotAllowed, /only local files/)
+            expect(listener.hits).to eq(0)
           end
         end
-        context "that does not exist" do
-          it "should raise an exception" do
-            expect { Movie.new("http://127.0.0.1:8000/awesome%20movie_missing.mov") }.to raise_error(Errno::ENOENT)
-          end
+      end
+
+      context "given a playlist disguised as an mp4 upload" do
+        let(:listener) { ConnectionCounter.new }
+        let(:playlist_path) { "#{tmp_path}/playlist_disguised_as.mp4" }
+        let(:local_segment) { File.expand_path("#{fixture_path}/movies/awesome movie.mov") }
+
+        before do
+          File.write(playlist_path, <<~M3U8)
+            #EXTM3U
+            #EXT-X-TARGETDURATION:10
+            #EXTINF:10.0,
+            #{local_segment}
+            #EXTINF:10.0,
+            http://127.0.0.1:#{listener.port}/segment.ts
+            #EXT-X-ENDLIST
+          M3U8
         end
-        context 'that redirects' do
-          context 'to a remote uri' do
-            let(:movie) { Movie.new('http://www.redirect-example.com/moved_movie.mov', false) }
 
-            it "should know the file size" do
-              expect(movie.size).to eq(455_546)
-            end
-          end
-          context 'to a relative uri' do
-            let(:movie) { Movie.new('http://127.0.0.1:8000/deep_path/awesome%20movie.mov', false) }
+        after do
+          listener.close
+          FileUtils.rm_f(playlist_path)
+        end
 
-            it 'should know the file size' do
-              expect(movie.size).to eq(455_546)
-            end
-          end
-          context 'to a relative uri respecting redirect limits' do
-            before { FFMPEG.max_http_redirect_attempts = 0 }
-            after { FFMPEG.max_http_redirect_attempts = nil }
+        it "rejects the hls demuxer instead of following the playlist entries", :aggregate_failures do
+          movie = Movie.new(playlist_path)
 
-            it 'raise FFMPEG::HTTPTooManyRequests' do
-              expect { Movie.new('http://127.0.0.1:8000/deep_path/awesome%20movie.mov', false) }.to raise_error(FFMPEG::HTTPTooManyRequests)
-            end
-          end
+          expect(movie).not_to be_valid
+          expect(movie.duration).to eq(0)
+          expect(movie.container).to be_nil
+          expect(listener.hits).to eq(0)
+        end
+      end
 
-          context 'to a relative uri with too many redirects' do
-            it 'should know the file size' do
-              expect { Movie.new('http://www.toomany-redirects-example.com/moved_movie.mov', false) }.to raise_error(FFMPEG::HTTPTooManyRequests)
-            end
-          end
+      context "probing a local file" do
+        it "passes the protocol and demuxer whitelists to ffprobe" do
+          expect(Open3).to receive(:popen3).with(
+            FFMPEG.ffprobe_binary, '-protocol_whitelist', 'file', '-format_whitelist', 'mov,mp4,m4a,3gp',
+            '-i', "#{fixture_path}/movies/awesome movie.mov", any_args
+          ).and_call_original
+
+          expect(Movie.new("#{fixture_path}/movies/awesome movie.mov")).to be_valid
+        end
+
+        it "still parses an mp4 under the default whitelist", :aggregate_failures do
+          movie = Movie.new("#{fixture_path}/movies/multi_audio_movie.mp4")
+
+          expect(movie).to be_valid
+          expect(movie.container).to eq('mov,mp4,m4a,3gp,3g2,mj2')
+          expect(movie.duration).to be > 0
         end
       end
 
@@ -128,7 +120,7 @@ module FFMPEG
         end
       end
 
-      context "given an empty flv file (could not find codec parameters)" do
+      context "given an empty flv file (could not find codec parameters)", :legacy_formats do
         let(:movie) { Movie.new("#{fixture_path}/movies/empty.flv") }
 
         it "should not be valid" do
@@ -221,7 +213,7 @@ module FFMPEG
         end
       end
 
-      context "given a weird aspect ratio file" do
+      context "given a weird aspect ratio file", :legacy_formats do
         let(:movie) { Movie.new("#{fixture_path}/movies/weird_aspect.small.mpg") }
 
         it "should parse the DAR" do
@@ -337,7 +329,7 @@ module FFMPEG
 
       end
 
-      context 'given a file with improperly formatted creation_time' do
+      context 'given a file with improperly formatted creation_time', :legacy_formats do
         let(:movie) { Movie.new("#{fixture_path}/sounds/bad_metadata_creation_time.wav") }
 
         it 'should set creation_time to nil' do
@@ -345,7 +337,7 @@ module FFMPEG
         end
       end
 
-      context "given a weird storage/pixel aspect ratio file" do
+      context "given a weird storage/pixel aspect ratio file", :legacy_formats do
         let(:movie) { Movie.new("#{fixture_path}/movies/weird_aspect.small.mpg") }
 
         it "should parse the SAR" do
@@ -535,7 +527,7 @@ module FFMPEG
       end
     end
 
-    describe 'transcode sound only' do
+    describe 'transcode sound only', :legacy_formats do
       let(:movie) { Movie.new("#{fixture_path}/sounds/hello.wav")}
 
       it "should run the transcoder" do
