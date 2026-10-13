@@ -5,35 +5,27 @@ require 'bundler'
 Bundler.require
 
 require 'fileutils'
-require 'webmock/rspec'
-WebMock.allow_net_connect!
+require 'socket'
 
 FFMPEG.logger = Logger.new(nil)
+
+LEGACY_FIXTURE_FORMATS = 'mov,mp4,m4a,3gp,flv,mpeg,mpegvideo,wav,mp3,image2,jpeg_pipe,png_pipe,bmp_pipe'.freeze
 
 RSpec.configure do |config|
   config.filter_run focus: true
   config.run_all_when_everything_filtered = true
 
-  config.before(:each) do
-    stub_request(:head, /redirect-example.com/).
-        with(:headers => {'Accept'=>'*/*', 'User-Agent' => 'Ruby'}).
-        to_return(status: 302, headers: {
-            location: 'http://127.0.0.1:8000/awesome%20movie.mov'
-        })
-    stub_request(:head, 'http://127.0.0.1:8000/deep_path/awesome%20movie.mov').
-        with(:headers => {'Accept'=>'*/*', 'User-Agent' => 'Ruby'}).
-        to_return(status: 302, headers: {
-            location: '/awesome%20movie.mov'
-        })
-    stub_request(:head, 'http://127.0.0.1:8000/awesome%20movie.mov?fail=1').
-        with(:headers => {'Accept'=>'*/*', 'User-Agent' => 'Ruby'}).
-        to_return(status: 404, headers: { })
-    stub_request(:head, /toomany-redirects-example/).
-        with(:headers => {'Accept'=>'*/*', 'User-Agent' => 'Ruby'}).
-        to_return(status: 302, headers: {
-            location: '/awesome%20movie.mov'
-        })
+  # Fixtures and transcoder outputs predating the demuxer whitelist (flv, mpeg, wav, jpg).
+  # Examples tagged :legacy_formats widen it; untagged examples run with the default.
+  config.around(:each) do |example|
+    next example.run unless example.metadata[:legacy_formats]
 
+    begin
+      FFMPEG.input_format_whitelist = LEGACY_FIXTURE_FORMATS
+      example.run
+    ensure
+      FFMPEG.input_format_whitelist = nil
+    end
   end
 end
 
@@ -45,24 +37,35 @@ def tmp_path
   @tmp_path ||= File.join(File.dirname(__FILE__), "..", "tmp")
 end
 
-def start_web_server
-  @server = WEBrick::HTTPServer.new(
-      Port: 8000,
-      DocumentRoot: "#{fixture_path}/movies",
-      Logger: WEBrick::Log.new(File.open(File::NULL, 'w')),
-      AccessLog: []
-  )
+# Counts every TCP connection made to it, so a spec can assert that ffmpeg/ffprobe never
+# reached the network (any protocol, not only HTTP).
+class ConnectionCounter
+  attr_reader :port
 
-  @server.mount_proc '/unauthorized.mov' do |_, response|
-    response.body = 'Unauthorized'
-    response.status = 403
+  def initialize
+    @server = TCPServer.new('127.0.0.1', 0)
+    @port = @server.addr[1]
+    @hits = 0
+    @mutex = Mutex.new
+    @thread = Thread.new do
+      loop do
+        client = @server.accept
+        @mutex.synchronize { @hits += 1 }
+        client.close
+      end
+    rescue IOError, Errno::EBADF
+      nil
+    end
   end
 
-  Thread.new { @server.start }
-end
+  def hits
+    @mutex.synchronize { @hits }
+  end
 
-def stop_web_server
-  @server.shutdown
+  def close
+    @server.close
+    @thread.join(1)
+  end
 end
 
 FileUtils.rm_rf(tmp_path)

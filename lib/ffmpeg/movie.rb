@@ -1,7 +1,5 @@
 require 'time'
 require 'multi_json'
-require 'uri'
-require 'net/http'
 
 module FFMPEG
   class Movie
@@ -12,25 +10,22 @@ module FFMPEG
     attr_reader :metadata, :format_tags
 
     UNSUPPORTED_CODEC_PATTERN = /^Unsupported codec with id (\d+) for input stream (\d+)$/
+    REMOTE_PATH_PATTERN = /\A[a-z][a-z0-9+.\-]*:/i
 
-    def initialize(path, skip_head_request: true)
+    # Only local files are accepted. A remote URL would make ffprobe (and any playlist inside the
+    # fetched file) open further URLs on the server's network, so callers must download first.
+    def initialize(path)
       @path = path
 
       if remote?
-        if !skip_head_request
-          @head = head
-          unless @head.is_a?(Net::HTTPSuccess)
-            raise Errno::ENOENT, "the URL '#{path}' does not exist or is not available (response code: #{@head.code})"
-          end
-        end
-      else
-        raise Errno::ENOENT, "the file '#{path}' does not exist" unless File.exist?(path)
+        raise RemoteInputNotAllowed,
+              "refusing to probe '#{path}': only local files are supported, download the input first"
       end
-
-      @path = path
+      raise Errno::ENOENT, "the file '#{path}' does not exist" unless File.exist?(path)
 
       # ffmpeg will output to stderr
-      command = [FFMPEG.ffprobe_binary, '-i', path, *%w(-print_format json -show_format -show_streams -show_error)]
+      command = [FFMPEG.ffprobe_binary, *FFMPEG.input_safety_options, '-i', path,
+                 *%w(-print_format json -show_format -show_streams -show_error)]
       std_output = ''
       std_error = ''
 
@@ -49,10 +44,6 @@ module FFMPEG
       end
 
       if @metadata.key?(:error)
-        if skip_head_request && /(?<http_status>\d\d\d)/ =~ @metadata[:error][:string]
-          raise Errno::ENOENT,
-            "the URL '#{path}' does not exist or is not available (response code: #{http_status})"
-        end
         @duration = 0
       else
         video_streams = @metadata[:streams].select { |stream| stream.key?(:codec_type) and stream[:codec_type] === 'video' }
@@ -151,8 +142,10 @@ module FFMPEG
       not @invalid
     end
 
+    # Anything with a URL scheme (http:, HTTPS:, concat:, subfile:, ...) is treated as remote:
+    # ffmpeg resolves those prefixes as protocols rather than as local paths.
     def remote?
-      @path =~ URI::regexp(%w(http https))
+      @path.to_s.match?(REMOTE_PATH_PATTERN)
     end
 
     def local?
@@ -182,11 +175,7 @@ module FFMPEG
     end
 
     def size
-      if local?
-        File.size(@path)
-      else
-        @head.nil? ? @metadata[:format][:size].to_i : @head.content_length
-      end
+      File.size(@path)
     end
 
     def audio_channel_layout
@@ -236,27 +225,6 @@ module FFMPEG
       output[/test/] # Running a regexp on the string throws error if it's not UTF-8
     rescue ArgumentError
       output.force_encoding("ISO-8859-1")
-    end
-
-    def head(location=@path, limit=FFMPEG.max_http_redirect_attempts)
-      url = URI(location)
-      return unless url.path
-
-      http = Net::HTTP.new(url.host, url.port)
-      http.use_ssl = url.port == 443
-      response = http.request_head(url.request_uri)
-
-      case response
-        when Net::HTTPRedirection then
-          raise FFMPEG::HTTPTooManyRequests if limit == 0
-          new_uri = url + URI(response['Location'])
-
-          head(new_uri, limit - 1)
-        else
-          response
-      end
-    rescue SocketError, Errno::ECONNREFUSED => e
-      nil
     end
   end
 end

@@ -1,6 +1,18 @@
 == Master
 
-Current with 3.0.2
+Current with 4.0.0
+
+== 4.0.0 2026-10-13
+
+Breaking Changes:
+* Movie only accepts local files; URLs and other protocol-prefixed paths raise FFMPEG::RemoteInputNotAllowed
+* Removed the HEAD-request/redirect handling, Movie#initialize's skip_head_request option,
+  FFMPEG.max_http_redirect_attempts and FFMPEG::HTTPTooManyRequests
+
+Security:
+* ffprobe and ffmpeg inputs run with -protocol_whitelist file and -format_whitelist
+  (FFMPEG.input_format_whitelist, default mov,mp4,m4a,3gp), so a playlist disguised as a video
+  cannot make ffmpeg open other files or URLs
 
 == 3.0.2 2016-11-18
 

@@ -1,7 +1,7 @@
 require 'spec_helper.rb'
 
 module FFMPEG
-  describe Transcoder do
+  describe Transcoder, :legacy_formats do
     let(:movie) { Movie.new("#{fixture_path}/movies/awesome movie.mov") }
 
     describe "initialization" do
@@ -21,6 +21,29 @@ module FFMPEG
 
       it "should not accept anything else as options" do
         expect { Transcoder.new(movie, output_path, "string?") }.to raise_error(ArgumentError, /Unknown options format/)
+      end
+    end
+
+    describe "input safety" do
+      let(:listener) { ConnectionCounter.new }
+      after { listener.close }
+
+      it "puts the protocol and demuxer whitelists before the input" do
+        transcoder = Transcoder.new(movie, "#{tmp_path}/safe.mp4", {}, input_options: %w(-ss 1))
+
+        expect(transcoder.command[1..7]).to eq(
+          ['-y', '-protocol_whitelist', 'file', '-format_whitelist', FFMPEG.input_format_whitelist, '-ss', '1']
+        )
+        expect(transcoder.command[8..9]).to eq(['-i', movie.path])
+      end
+
+      it "does not open a network input passed as transcoder_options[:input]", :aggregate_failures do
+        allow(FFMPEG.logger).to receive(:error)
+        transcoder = Transcoder.new(nil, "#{tmp_path}/remote.mp4", {},
+                                    input: "http://127.0.0.1:#{listener.port}/awesome.mov")
+
+        expect { transcoder.run }.to raise_error(FFMPEG::Error, /non-zero exit code/)
+        expect(listener.hits).to eq(0)
       end
     end
 
@@ -196,17 +219,6 @@ module FFMPEG
           expect(encoded.duration).to be <= 2.2
         end
 
-        context "with remote URL as input" do
-          before(:context) { start_web_server }
-          after(:context) { stop_web_server }
-
-          it "should transcode correctly" do
-            movie = Movie.new("http://127.0.0.1:8000/awesome%20movie.mov")
-
-            expect { Transcoder.new(movie, "#{tmp_path}/output.flv").run }.not_to raise_error
-          end
-        end
-
         context "with screenshot option" do
           it "should transcode to original movies resolution by default" do
             encoded = Transcoder.new(movie, "#{tmp_path}/image.jpg", screenshot: true).run
@@ -346,7 +358,7 @@ module FFMPEG
 
       context 'with input_options' do
         let(:transcoder) { Transcoder.new(movie, 'tmp.mp4', {}, input_options: input_options) }
-        let(:expected_result) { "-y -ss 30 -i #{transcoder.input}" }
+        let(:expected_result) { "-y #{FFMPEG.input_safety_options.join(' ')} -ss 30 -i #{transcoder.input}" }
 
         context 'as an array' do
           let(:input_options) { %w(-framerate 1/5 -re) }
@@ -420,7 +432,7 @@ module FFMPEG
           end
 
           it 'should add the input_options before the input' do
-            expect(transcoder.command.join(' ')).to include("-y -re -i #{transcoder.input}")
+            expect(transcoder.command.join(' ')).to include("-y #{FFMPEG.input_safety_options.join(' ')} -re -i #{transcoder.input}")
           end
         end
 
